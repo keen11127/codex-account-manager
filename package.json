@@ -4,13 +4,13 @@
   "private": true,
   "author": "Local Codex Tools",
   "license": "MIT",
-  "homepage": "https://github.com/xiaosu11127-rgb/codex-account-manager",
+  "homepage": "https://github.com/keen11127/codex-account-manager",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xiaosu11127-rgb/codex-account-manager.git"
+    "url": "git+https://github.com/keen11127/codex-account-manager.git"
   },
   "bugs": {
-    "url": "https://github.com/xiaosu11127-rgb/codex-account-manager/issues"
+    "url": "https://github.com/keen11127/codex-account-manager/issues"
   },
   "description": "Local Windows desktop manager for multiple Codex accounts, usage limits, and reset credits.",
   "main": "electron/main.cjs",
