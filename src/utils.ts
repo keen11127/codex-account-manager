@@ -34,8 +34,14 @@ const planLabels: Record<PlanType, string> = {
   unknown: "未知套餐",
 };
 
-export function getPlanLabel(plan: PlanType | null | undefined) {
-  return planLabels[plan || "unknown"];
+export function getPlanLabel(plan: string | null | undefined) {
+  const rawPlan = typeof plan === "string" ? plan.trim() : "";
+  if (!rawPlan || rawPlan.toLowerCase() === "unknown") {
+    return planLabels.unknown;
+  }
+
+  const knownLabel = planLabels[rawPlan.toLowerCase() as PlanType];
+  return knownLabel || `未知套餐（${rawPlan}）`;
 }
 
 export function remainingPercent(window: RateLimitWindow | null | undefined) {
@@ -150,7 +156,9 @@ export function getAccountEmail(account: ManagedAccount) {
 
 export function getAccountPlan(account: ManagedAccount) {
   if (account.account?.type !== "chatgpt") return null;
-  return account.account.planType;
+  const identityPlan = account.account.planType;
+  if (identityPlan && identityPlan !== "unknown") return identityPlan;
+  return account.rateLimitData?.rateLimits?.planType || identityPlan;
 }
 
 export function getAvailableResetCredits(

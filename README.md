@@ -9,6 +9,7 @@
 - 为每个账号创建独立的 `CODEX_HOME`，登录状态互不覆盖。
 - 通过浏览器完成 ChatGPT 登录，关闭应用后保留本机登录文件。
 - 集中展示 5 小时额度、每周额度、重置倒计时和套餐信息。
+- 识别 Free、Go、Plus、Pro、Team、Business、Enterprise、Edu 等套餐；新套餐代码会保留原始值，不会误判为 Plus。
 - 仅显示包含真实 ID、状态可用且尚未过期的重置卡。
 - 支持单账号使用重置卡，以及带二次确认的批量使用流程。
 - 标记额度耗尽、额度数据缺失、刷新异常和“疑似 BUG号”。
@@ -76,4 +77,3 @@ D:\codex-account-manager-data
 ## 开源协议
 
 项目基于 [MIT License](LICENSE) 开源。参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题请参考 [SECURITY.md](SECURITY.md)。
-

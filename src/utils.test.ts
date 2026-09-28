@@ -11,6 +11,7 @@ import {
   getAvailableResetCreditId,
   getExhaustedQuotaLabel,
   getMissingQuotaLabel,
+  getAccountPlan,
   getPlanLabel,
   getResetCount,
   getResetCreditDisplay,
@@ -75,7 +76,24 @@ describe("usage formatting", () => {
 
   it("uses readable plan labels", () => {
     expect(getPlanLabel("self_serve_business_usage_based")).toBe("Business");
+    expect(getPlanLabel("PLUS")).toBe("Plus");
     expect(getPlanLabel("unknown")).toBe("未知套餐");
+    expect(getPlanLabel("future_ultra")).toBe(
+      "未知套餐（future_ultra）",
+    );
+  });
+
+  it("uses the quota snapshot plan when the account identity is unknown", () => {
+    const account = structuredClone(connectedAccount);
+    if (account.account?.type === "chatgpt") {
+      account.account.planType = "unknown";
+    }
+    if (account.rateLimitData?.rateLimits) {
+      account.rateLimitData.rateLimits.planType = "edu_pro";
+    }
+
+    expect(getAccountPlan(account)).toBe("edu_pro");
+    expect(getPlanLabel(getAccountPlan(account))).toBe("Edu Pro");
   });
 
   it("summarizes account health from the lowest quota window", () => {
