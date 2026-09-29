@@ -126,8 +126,15 @@ describe("usage formatting", () => {
     expect(getAccountHealth(suspected)).toEqual({
       tone: "warning",
       label: "疑似 BUG号",
-      description: "5 小时额度正常扣量，但每周额度持续未读取",
+      description: "5 小时额度正常扣量，但每周额度持续未读取，仅作状态提示",
     });
+    expect(accountNeedsAttention(suspected)).toBe(false);
+
+    if (suspected.rateLimitData?.rateLimits?.primary) {
+      suspected.rateLimitData.rateLimits.primary.usedPercent = 100;
+    }
+    expect(getAccountHealth(suspected).label).toBe("5 小时额度已耗尽");
+    expect(accountNeedsAttention(suspected)).toBe(true);
   });
 
   it("localizes full reset credit details", () => {
@@ -270,7 +277,8 @@ describe("usage formatting", () => {
     expect(getAccountHealth(recovered)).toEqual({
       tone: "warning",
       label: "疑似 BUG号",
-      description: "5 小时额度正常扣量，但每周额度持续未读取",
+      description: "5 小时额度正常扣量，但每周额度持续未读取，仅作状态提示",
     });
+    expect(accountNeedsAttention(recovered)).toBe(false);
   });
 });

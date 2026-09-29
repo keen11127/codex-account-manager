@@ -304,28 +304,53 @@ export function getAccountHealth(account: ManagedAccount): AccountHealth {
     };
   }
 
-  if (isSuspectedBugAccount(account)) {
-    return {
-      tone: "warning",
-      label: "疑似 BUG号",
-      description: "5 小时额度正常扣量，但每周额度持续未读取",
-    };
-  }
-
-  const missingQuotaLabel = getMissingQuotaLabel(account);
-  if (missingQuotaLabel) {
-    return {
-      tone: "warning",
-      label: "额度需重新登录",
-      description: `${missingQuotaLabel}，请重新登录获取`,
-    };
-  }
-
   if (limits.spendControlReached) {
     return {
       tone: "danger",
       label: "Credits 支出已受限",
       description: "当前账号已触发 Credits 支出控制",
+    };
+  }
+
+  if (isSuspectedBugAccount(account)) {
+    const primaryRemaining = remainingPercent(limits.primary);
+
+    if (primaryRemaining === 0) {
+      return {
+        tone: "danger",
+        label: "5 小时额度已耗尽",
+        description: "等待 5 小时额度窗口重置或使用真实可用的重置卡",
+      };
+    }
+
+    if (limits.rateLimitReachedType) {
+      return {
+        tone: "danger",
+        label: "额度已触达上限",
+        description: "等待额度窗口重置或使用可用重置卡",
+      };
+    }
+
+    if (primaryRemaining !== null && primaryRemaining <= 15) {
+      return {
+        tone: "danger",
+        label: "额度即将耗尽",
+        description: `5 小时额度窗口仅剩 ${primaryRemaining}%`,
+      };
+    }
+
+    if (primaryRemaining !== null && primaryRemaining <= 35) {
+      return {
+        tone: "warning",
+        label: "额度余量偏低",
+        description: `5 小时额度窗口剩余 ${primaryRemaining}%`,
+      };
+    }
+
+    return {
+      tone: "warning",
+      label: "疑似 BUG号",
+      description: "5 小时额度正常扣量，但每周额度持续未读取，仅作状态提示",
     };
   }
 
@@ -372,6 +397,15 @@ export function getAccountHealth(account: ManagedAccount): AccountHealth {
     };
   }
 
+  const missingQuotaLabel = getMissingQuotaLabel(account);
+  if (missingQuotaLabel) {
+    return {
+      tone: "warning",
+      label: "额度需重新登录",
+      description: `${missingQuotaLabel}，请重新登录获取`,
+    };
+  }
+
   return {
     tone: "healthy",
     label: "账号状态正常",
@@ -381,7 +415,8 @@ export function getAccountHealth(account: ManagedAccount): AccountHealth {
 }
 
 export function accountNeedsAttention(account: ManagedAccount) {
-  return getAccountHealth(account).tone !== "healthy";
+  const health = getAccountHealth(account);
+  return health.tone !== "healthy" && health.label !== "疑似 BUG号";
 }
 
 export function getResetCreditDisplay(credit: ResetCredit) {

@@ -19,8 +19,6 @@ import {
   Dismiss20Regular,
   PersonAccounts20Regular,
   Search20Regular,
-  Send20Filled,
-  ShieldLock20Filled,
   TicketDiagonal20Regular,
   Warning20Regular,
 } from "@fluentui/react-icons";
@@ -39,17 +37,21 @@ import { bridge } from "./bridge";
 import { AccountDetail } from "./components/AccountDetail";
 import { AccountOverview } from "./components/AccountOverview";
 import { AccountTable } from "./components/AccountTable";
+import { AboutPage } from "./components/AboutPage";
 import { SideNavigation } from "./components/SideNavigation";
-import type { ManagedAccount, ResetCredit } from "./types";
+import { WorkspaceTools } from "./components/WorkspaceTools";
+import type { AppView, ManagedAccount, ResetCredit } from "./types";
 import {
   accountNeedsAttention,
   accountSearchText,
   canResetExhaustedWeeklyQuota,
+  formatDateTime,
   formatElapsedSinceReset,
   formatExpiry,
   formatFullResetDateTime,
   formatUpdatedAt,
   getAccountEmail,
+  getAvailableResetCredits,
   getAvailableResetCreditId,
   getMissingQuotaLabel,
   getResetCount,
@@ -57,11 +59,21 @@ import {
   getResetOutcomeText,
   hasExhaustedWeeklyQuota,
   hasLimitedQuota,
+  isSuspectedBugAccount,
   remainingPercent,
 } from "./utils";
 
 type ToastIntent = "success" | "error" | "warning" | "info";
 type AccountFilter = "all" | "attention" | "reset";
+
+const viewTitles: Record<AppView, { title: string; subtitle: string }> = {
+  accounts: { title: "账号中心", subtitle: "额度与登录状态" },
+  instructions: { title: "指令提示词", subtitle: "账号级 AGENTS.md" },
+  config: { title: "Codex 配置", subtitle: "模型、Provider 与 MCP" },
+  extensions: { title: "技能和 MCP", subtitle: "本地扩展管理" },
+  sessions: { title: "会话管理", subtitle: "本地历史记录" },
+  about: { title: "关于", subtitle: "版本、更新与相关入口" },
+};
 
 interface LocalDialogProps {
   open: boolean;
@@ -269,6 +281,7 @@ function updateWorkingSet(
 }
 
 export function App() {
+  const [activeView, setActiveView] = useState<AppView>("accounts");
   const [accounts, setAccounts] = useState<ManagedAccount[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -497,7 +510,9 @@ export function App() {
       );
       const incompleteAccounts = nextAccounts.filter(
         (account) =>
-          account.status === "connected" && Boolean(getMissingQuotaLabel(account)),
+          account.status === "connected" &&
+          Boolean(getMissingQuotaLabel(account)) &&
+          !isSuspectedBugAccount(account),
       );
       const details: string[] = [];
       if (failedAccounts.length > 0) {
@@ -728,22 +743,6 @@ export function App() {
     }
   };
 
-  const openOfficialChannel = async () => {
-    try {
-      await bridge.openOfficialChannel();
-    } catch (error) {
-      notify("打开官方频道失败", errorMessage(error), "error");
-    }
-  };
-
-  const openVpnSponsor = async () => {
-    try {
-      await bridge.openVpnSponsor();
-    } catch (error) {
-      notify("打开 VPN 推荐失败", errorMessage(error), "error");
-    }
-  };
-
   return (
     <div className="app-shell">
       {notice ? (
@@ -785,39 +784,29 @@ export function App() {
           ) : null}
         </div>
 
+        <div className="topbar-view" aria-live="polite">
+          <strong>{viewTitles[activeView].title}</strong>
+          <span>{viewTitles[activeView].subtitle}</span>
+        </div>
+
         <div className="topbar-actions">
-          <Button
-            className="vpn-sponsor-button"
-            appearance="subtle"
-            icon={<ShieldLock20Filled />}
-            aria-label="打开 VPN 推荐网站"
-            onClick={() => void openVpnSponsor()}
-          >
-            VPN 推荐
-          </Button>
-          <Button
-            className="official-channel-button"
-            appearance="secondary"
-            icon={<Send20Filled />}
-            aria-label="打开 Telegram 官方频道"
-            onClick={() => void openOfficialChannel()}
-          >
-            官方频道
-          </Button>
-          <Button
-            appearance="primary"
-            icon={<Add20Regular />}
-            aria-label="添加账号"
-            onClick={() => setAddOpen(true)}
-          >
-            添加账号
-          </Button>
+          {activeView === "accounts" ? (
+            <Button
+              appearance="primary"
+              icon={<Add20Regular />}
+              aria-label="添加账号"
+              onClick={() => setAddOpen(true)}
+            >
+              添加账号
+            </Button>
+          ) : null}
         </div>
       </header>
 
       <main className="app-main">
-        <SideNavigation />
-        <>
+        <SideNavigation activeView={activeView} onChange={setActiveView} />
+        {activeView === "accounts" ? (
+          <>
           <section className="summary-band" aria-label="账号摘要">
           <div className="summary-item">
             <span className="summary-item__icon summary-item__icon--teal">
@@ -1023,7 +1012,22 @@ export function App() {
             }
           />
           </section>
-        </>
+          </>
+        ) : (
+          <section className="utility-workspace">
+            {activeView === "about" ? (
+              <AboutPage onNotify={notify} />
+            ) : (
+              <WorkspaceTools
+                view={activeView}
+                accounts={accounts}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onNotify={notify}
+              />
+            )}
+          </section>
+        )}
       </main>
 
       <Dialog open={addOpen} onOpenChange={(_event, data) => setAddOpen(data.open)}>
@@ -1157,11 +1161,17 @@ export function App() {
                     <strong>{consumeDisplay.scope}</strong>
                   </div>
                   <div>
-                    <span>有效期</span>
+                    <span>剩余有效期</span>
                     <strong>
                       {consumeTarget.credit.expiresAt
                         ? formatExpiry(consumeTarget.credit.expiresAt, now)
                         : "无固定到期时间"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>到期时间</span>
+                    <strong>
+                      {formatDateTime(consumeTarget.credit.expiresAt)}
                     </strong>
                   </div>
                 </div>
@@ -1241,6 +1251,16 @@ export function App() {
                     account.rateLimitData?.rateLimits?.secondary,
                   );
                   const recommended = canResetExhaustedWeeklyQuota(account, now);
+                  const earliestExpiringCredit = getAvailableResetCredits(
+                    account,
+                    now,
+                  )
+                    .filter((credit) => Boolean(credit.expiresAt))
+                    .sort(
+                      (first, second) =>
+                        (first.expiresAt || Number.POSITIVE_INFINITY) -
+                        (second.expiresAt || Number.POSITIVE_INFINITY),
+                    )[0];
                   return (
                     <label className="bulk-reset-row" key={account.id}>
                       <Checkbox
@@ -1266,6 +1286,16 @@ export function App() {
                             : `周额度 ${weeklyRemaining}%`}
                         </strong>
                         <span>{getResetCount(account, now) || 0} 张可用</span>
+                        <span className="bulk-reset-row__expiry">
+                          {earliestExpiringCredit
+                            ? formatExpiry(earliestExpiringCredit.expiresAt, now)
+                            : "无固定到期时间"}
+                        </span>
+                        {earliestExpiringCredit?.expiresAt ? (
+                          <time>
+                            {formatDateTime(earliestExpiringCredit.expiresAt)}
+                          </time>
+                        ) : null}
                         {recommended ? <b>建议重置</b> : null}
                       </span>
                     </label>

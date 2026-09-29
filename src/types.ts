@@ -170,6 +170,76 @@ export interface SystemInfo {
   dataDirectory: string;
 }
 
+export type AppView =
+  | "accounts"
+  | "instructions"
+  | "config"
+  | "extensions"
+  | "sessions"
+  | "about";
+
+export type ManagedFileKind = "instructions" | "config";
+
+export interface ManagedTextFile {
+  kind: ManagedFileKind;
+  path: string;
+  exists: boolean;
+  content: string;
+  updatedAt: string | null;
+  backupPath?: string | null;
+}
+
+export interface ManagedSkill {
+  id: string;
+  name: string;
+  enabled: boolean;
+  canToggle: boolean;
+  description: string | null;
+}
+
+export interface ManagedMcpServer {
+  name: string;
+  transport: string;
+  target: string | null;
+}
+
+export interface ExtensionInventory {
+  skills: ManagedSkill[];
+  mcpServers: ManagedMcpServer[];
+  skillsDirectory: string;
+  disabledSkillsDirectory: string;
+}
+
+export interface ManagedSession {
+  id: string;
+  name: string;
+  updatedAt: string;
+  sizeBytes: number;
+  projectPath: string | null;
+  model: string | null;
+}
+
+export interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  publishedAt: string | null;
+  notes: string | null;
+  downloadUrl: string | null;
+  assetName: string | null;
+  checksumUrl: string | null;
+  releaseUrl: string;
+}
+
+export interface UpdateInstallResult {
+  filePath: string;
+  fileName: string;
+  bytes: number;
+  sha256: string;
+  isInstaller: boolean;
+  launched: boolean;
+}
+
 export interface RemoveAccountResult {
   removed: boolean;
   cleanupDeferred: boolean;
@@ -198,6 +268,29 @@ export interface CodexManagerBridge {
   openCodexWeb(): Promise<void>;
   openOfficialChannel(): Promise<void>;
   openVpnSponsor(): Promise<void>;
+  openRepository(): Promise<void>;
+  readManagedFile(id: string, kind: ManagedFileKind): Promise<ManagedTextFile>;
+  writeManagedFile(
+    id: string,
+    kind: ManagedFileKind,
+    content: string,
+  ): Promise<ManagedTextFile>;
+  listExtensions(id: string): Promise<ExtensionInventory>;
+  toggleSkill(
+    id: string,
+    skillId: string,
+    enabled: boolean,
+  ): Promise<ExtensionInventory>;
+  listSessions(id: string): Promise<ManagedSession[]>;
+  deleteSession(id: string, sessionId: string): Promise<ManagedSession[]>;
+  openSessionLocation(id: string, sessionId: string): Promise<boolean>;
+  openToolPath(
+    id: string,
+    kind: ManagedFileKind | "home" | "skills" | "sessions",
+  ): Promise<string>;
+  checkForUpdate(): Promise<UpdateInfo>;
+  installUpdate(): Promise<UpdateInstallResult>;
+  openDownloads(): Promise<void>;
   getSystemInfo(): Promise<SystemInfo>;
   reportError(error: unknown): void;
 }

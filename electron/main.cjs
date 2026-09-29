@@ -35,6 +35,20 @@ const {
   createKeyedSerialQueue,
   createSerialQueue,
 } = require("./operation-queue.cjs");
+const {
+  getToolPath,
+  listExtensions,
+  listSessions,
+  readManagedFile,
+  resolveSessionPath,
+  toggleSkill,
+  writeManagedFile,
+} = require("./workspace-tools.cjs");
+const {
+  RELEASES_URL,
+  checkForUpdate,
+  downloadUpdate,
+} = require("./update-service.cjs");
 
 const LEGACY_USER_DATA_ROOT = path.join(
   app.getPath("appData"),
@@ -78,6 +92,7 @@ let storeRecoveryError = null;
 let orphanCleanupTimer = null;
 let orphanCleanupRunning = false;
 let refreshAllInFlight = null;
+let lastCheckedUpdate = null;
 const protectedProfileRoots = new Set();
 const activeAppServerClients = new Set();
 const storeMutationQueue = createSerialQueue();
@@ -986,6 +1001,49 @@ function registerIpcHandlers() {
     const account = await findAccount(String(id));
     return shell.openPath(account.codexHome);
   });
+  ipcMain.handle("tools:read-file", async (_event, id, kind) => {
+    const account = await findAccount(String(id));
+    return readManagedFile(account.codexHome, String(kind));
+  });
+  ipcMain.handle("tools:write-file", async (_event, id, kind, content) => {
+    const account = await findAccount(String(id));
+    return writeManagedFile(account.codexHome, String(kind), content);
+  });
+  ipcMain.handle("tools:list-extensions", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return listExtensions(account.codexHome);
+  });
+  ipcMain.handle("tools:toggle-skill", async (_event, id, skillId, enabled) => {
+    const account = await findAccount(String(id));
+    return toggleSkill(account.codexHome, String(skillId), Boolean(enabled));
+  });
+  ipcMain.handle("tools:list-sessions", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return listSessions(account.codexHome);
+  });
+  ipcMain.handle("tools:delete-session", async (_event, id, sessionId) => {
+    const account = await findAccount(String(id));
+    const sessionPath = resolveSessionPath(account.codexHome, String(sessionId));
+    await shell.trashItem(sessionPath);
+    return listSessions(account.codexHome);
+  });
+  ipcMain.handle("tools:open-session", async (_event, id, sessionId) => {
+    const account = await findAccount(String(id));
+    const sessionPath = resolveSessionPath(account.codexHome, String(sessionId));
+    shell.showItemInFolder(sessionPath);
+    return true;
+  });
+  ipcMain.handle("tools:open-path", async (_event, id, kind) => {
+    const account = await findAccount(String(id));
+    const target = getToolPath(account.codexHome, String(kind));
+    const extension = path.extname(target);
+    if (!extension) await fsp.mkdir(target, { recursive: true });
+    if (extension && fs.existsSync(target)) {
+      shell.showItemInFolder(target);
+      return "";
+    }
+    return shell.openPath(extension ? account.codexHome : target);
+  });
   ipcMain.handle("system:open-data", async () =>
     shell.openPath(getStorePaths().root),
   );
@@ -1001,6 +1059,28 @@ function registerIpcHandlers() {
   ipcMain.handle("external:vpn-sponsor", async () =>
     shell.openExternal("https://renminde.com"),
   );
+  ipcMain.handle("external:repository", async () =>
+    shell.openExternal("https://github.com/keen11127/codex-account-manager"),
+  );
+  ipcMain.handle("updates:check", async () => {
+    lastCheckedUpdate = await checkForUpdate(APP_VERSION);
+    return lastCheckedUpdate;
+  });
+  ipcMain.handle("updates:open-downloads", async () =>
+    shell.openExternal(lastCheckedUpdate?.releaseUrl || RELEASES_URL),
+  );
+  ipcMain.handle("updates:install", async () => {
+    const updateInfo = lastCheckedUpdate || (await checkForUpdate(APP_VERSION));
+    lastCheckedUpdate = updateInfo;
+    const downloaded = await downloadUpdate(
+      path.join(APP_DATA_ROOT, "updates"),
+      updateInfo,
+    );
+    const openError = await shell.openPath(downloaded.filePath);
+    if (openError) throw new Error(`启动更新程序失败：${openError}`);
+    setTimeout(() => app.quit(), 1_000);
+    return { ...downloaded, launched: true };
+  });
   ipcMain.handle("system:info", async () => {
     let codexFound = true;
     let codexVersion = null;

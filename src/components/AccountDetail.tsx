@@ -18,6 +18,7 @@ import {
 import type { ManagedAccount, ResetCredit } from "../types";
 import {
   formatElapsedSinceReset,
+  formatDateTime,
   formatExpiry,
   formatFullResetDateTime,
   formatUpdatedAt,
@@ -88,6 +89,8 @@ export function AccountDetail({
   );
   const lastOfficialResetAt = account.usageStats?.lastOfficialResetAt || null;
   const suspectedBugAccount = isSuspectedBugAccount(account);
+  const showReloginAction =
+    connected && Boolean(missingQuotaLabel) && !suspectedBugAccount;
   const statusLabel =
     suspectedBugAccount
       ? "疑似 BUG号"
@@ -151,7 +154,7 @@ export function AccountDetail({
 
       <div
         className={`detail-health is-${health.tone}${
-          connected && missingQuotaLabel ? " has-action" : ""
+          showReloginAction ? " has-action" : ""
         }`}
       >
         <span className="detail-health__icon" aria-hidden="true">
@@ -167,7 +170,7 @@ export function AccountDetail({
           <strong>{health.label}</strong>
           <span>{health.description}</span>
         </div>
-        {connected && missingQuotaLabel ? (
+        {showReloginAction ? (
           <Button
             className="detail-health__action"
             appearance="subtle"
@@ -330,9 +333,20 @@ export function AccountDetail({
                       <div className="reset-card__content">
                         <strong>{display.title}</strong>
                         <span className="reset-card__scope">{display.scope}</span>
-                        <span>
+                        <span className="reset-card__expiry">
                           <Clock20Regular />
-                          {formatExpiry(credit.expiresAt, now)}
+                          <span>
+                            <b>剩余有效期：{formatExpiry(credit.expiresAt, now)}</b>
+                            <time
+                              dateTime={
+                                credit.expiresAt
+                                  ? new Date(credit.expiresAt * 1000).toISOString()
+                                  : undefined
+                              }
+                            >
+                              到期时间：{formatDateTime(credit.expiresAt)}
+                            </time>
+                          </span>
                         </span>
                       </div>
                       <Button

@@ -14,8 +14,11 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { ManagedAccount } from "../types";
 import {
+  formatDateTime,
+  formatExpiry,
   getAccountEmail,
   getAccountPlan,
+  getAvailableResetCredits,
   getPlanLabel,
   getResetCount,
   isSuspectedBugAccount,
@@ -136,6 +139,13 @@ export function AccountTable({
           const primary = limits?.primary;
           const secondary = limits?.secondary;
           const resetCount = getResetCount(account, now);
+          const earliestExpiringCredit = getAvailableResetCredits(account, now)
+            .filter((credit) => Boolean(credit.expiresAt))
+            .sort(
+              (first, second) =>
+                (first.expiresAt || Number.POSITIVE_INFINITY) -
+                (second.expiresAt || Number.POSITIVE_INFINITY),
+            )[0];
           const connected = account.status === "connected";
           const hasSnapshot = Boolean(account.account);
           const cachedQuotaTypes =
@@ -210,9 +220,28 @@ export function AccountTable({
                 {resetCount === null ? (
                   <span className="muted-value">--</span>
                 ) : resetCount > 0 ? (
-                  <Badge appearance="filled" color="success" size="medium">
-                    {resetCount} 张
-                  </Badge>
+                  <div className="reset-credit-summary">
+                    <Badge appearance="filled" color="success" size="medium">
+                      {resetCount} 张
+                    </Badge>
+                    <span>
+                      {earliestExpiringCredit
+                        ? formatExpiry(earliestExpiringCredit.expiresAt, now)
+                        : "无固定到期时间"}
+                    </span>
+                    {earliestExpiringCredit?.expiresAt ? (
+                      <time
+                        dateTime={new Date(
+                          earliestExpiringCredit.expiresAt * 1000,
+                        ).toISOString()}
+                        title={`到期时间：${formatDateTime(
+                          earliestExpiringCredit.expiresAt,
+                        )}`}
+                      >
+                        {formatDateTime(earliestExpiringCredit.expiresAt)}
+                      </time>
+                    ) : null}
+                  </div>
                 ) : (
                   <span className="muted-value">0 张</span>
                 )}

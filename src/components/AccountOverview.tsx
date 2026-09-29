@@ -8,6 +8,7 @@ import {
 } from "@fluentui/react-icons";
 import type { ManagedAccount } from "../types";
 import {
+  accountNeedsAttention,
   formatTimeUntil,
   getAccountHealth,
 } from "../utils";
@@ -39,7 +40,7 @@ export function AccountOverview({
 }: AccountOverviewProps) {
   const attention = accounts
     .map((account) => ({ account, health: getAccountHealth(account) }))
-    .filter(({ health }) => health.tone !== "healthy")
+    .filter(({ account }) => accountNeedsAttention(account))
     .sort((a, b) => toneOrder[a.health.tone] - toneOrder[b.health.tone])
     .slice(0, 3);
 

@@ -7,6 +7,30 @@ import type {
 
 const now = Math.floor(Date.now() / 1000);
 
+const mockFiles = {
+  instructions: `# 全局协作规则\n\n- 优先复用项目现有结构。\n- 修改后运行测试并说明结果。\n`,
+  config: `model = "gpt-6-sol"\n\n[mcp_servers.docs]\ncommand = "npx"\nargs = ["-y", "docs-mcp"]\n`,
+};
+
+let mockSessions = [
+  {
+    id: "2026/09/29/session-demo-1.jsonl",
+    name: "session-demo-1",
+    updatedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+    sizeBytes: 184_320,
+    projectPath: "D:\\projects\\dashboard",
+    model: "gpt-6-sol",
+  },
+  {
+    id: "2026/09/28/session-demo-2.jsonl",
+    name: "session-demo-2",
+    updatedAt: new Date(Date.now() - 26 * 60 * 60_000).toISOString(),
+    sizeBytes: 92_410,
+    projectPath: "D:\\projects\\client",
+    model: "gpt-6-luna",
+  },
+];
+
 const resetCredit: ResetCredit = {
   id: "demo-reset-001",
   status: "available",
@@ -334,9 +358,116 @@ export const mockBridge: CodexManagerBridge = {
   async openVpnSponsor() {
     window.open("https://renminde.com", "_blank", "noopener,noreferrer");
   },
+  async openRepository() {
+    window.open(
+      "https://github.com/keen11127/codex-account-manager",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  },
+  async readManagedFile(_id, kind) {
+    return {
+      kind,
+      path:
+        kind === "instructions"
+          ? "D:\\codex-home\\AGENTS.md"
+          : "D:\\codex-home\\config.toml",
+      exists: true,
+      content: mockFiles[kind],
+      updatedAt: new Date().toISOString(),
+    };
+  },
+  async writeManagedFile(_id, kind, content) {
+    mockFiles[kind] = content;
+    return {
+      kind,
+      path:
+        kind === "instructions"
+          ? "D:\\codex-home\\AGENTS.md"
+          : "D:\\codex-home\\config.toml",
+      exists: true,
+      content,
+      updatedAt: new Date().toISOString(),
+      backupPath: `D:\\codex-home\\backups\\${kind}.bak`,
+    };
+  },
+  async listExtensions() {
+    return {
+      skills: [
+        {
+          id: "document-tools",
+          name: "document-tools",
+          enabled: true,
+          canToggle: true,
+          description: "文档读取与结构化处理工具",
+        },
+        {
+          id: "browser-automation",
+          name: "browser-automation",
+          enabled: false,
+          canToggle: true,
+          description: "浏览器自动化工作流",
+        },
+      ],
+      mcpServers: [
+        { name: "docs", transport: "本地进程", target: "npx" },
+      ],
+      skillsDirectory: "D:\\codex-home\\skills",
+      disabledSkillsDirectory: "D:\\codex-home\\skills-disabled",
+    };
+  },
+  async toggleSkill(_id, skillId, enabled) {
+    const inventory = await this.listExtensions(_id);
+    const target = inventory.skills.find((skill) => skill.id === skillId);
+    if (target) target.enabled = enabled;
+    return inventory;
+  },
+  async listSessions() {
+    return structuredClone(mockSessions);
+  },
+  async deleteSession(_id, sessionId) {
+    mockSessions = mockSessions.filter((session) => session.id !== sessionId);
+    return structuredClone(mockSessions);
+  },
+  async openSessionLocation() {
+    return true;
+  },
+  async openToolPath() {
+    return "";
+  },
+  async checkForUpdate() {
+    return {
+      currentVersion: "0.3.0",
+      latestVersion: "0.3.1",
+      hasUpdate: true,
+      publishedAt: new Date().toISOString(),
+      notes: "界面预览更新",
+      downloadUrl: "https://example.test/setup.exe",
+      assetName: "Codex Account Manager-0.3.1-x64-setup.exe",
+      checksumUrl: "https://example.test/SHA256SUMS.txt",
+      releaseUrl: "https://github.com/keen11127/codex-account-manager/releases",
+    };
+  },
+  async installUpdate() {
+    return {
+      filePath: "D:\\codex-account-manager-data\\updates\\setup.exe",
+      fileName: "setup.exe",
+      bytes: 100,
+      sha256: "DEMO",
+      isInstaller: true,
+      launched: true,
+    };
+  },
+  async openDownloads() {
+    window.open(
+      "https://github.com/keen11127/codex-account-manager/releases",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  },
   async getSystemInfo() {
     return {
-      appVersion: "0.2.13",
+      appVersion: "0.3.0",
       codexFound: true,
       codexVersion: "codex-cli 0.153.4",
       dataDirectory: "D:\\codex-account-manager-data",
