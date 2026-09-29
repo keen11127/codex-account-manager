@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { spawn, execFileSync, spawnSync } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
@@ -44,6 +44,50 @@ const {
   toggleSkill,
   writeManagedFile,
 } = require("./workspace-tools.cjs");
+const {
+  activateProvider,
+  checkConfigHealth,
+  checkSkillUpdates,
+  deletePromptCategory,
+  deletePrompt,
+  deleteProvider,
+  duplicateProvider,
+  exportSessions,
+  exportSessionsMarkdown,
+  exportWorkspace,
+  importCcSwitchProviders,
+  importExistingWorkspace,
+  importPrompt,
+  installSkillZip,
+  listBackups,
+  listPrompts,
+  listProviders,
+  listSessionStatus,
+  listWorkspaceExtensions,
+  previewExistingWorkspace,
+  repairConfigHealth,
+  restoreBackup,
+  runDiagnostics,
+  saveExtensionNote,
+  savePrompt,
+  savePromptCategory,
+  saveProvider,
+  saveRouting,
+  setContextWindow,
+  setPromptMode,
+  syncPromptCatalog,
+  syncSessionMetadata,
+  testProvider,
+  toggleMcp,
+  togglePrompt,
+  updateSkill,
+} = require("./workspace-suite.cjs");
+const {
+  configureRouter,
+  getRouterStatus,
+  resetRouterHealth,
+  suspendRouter,
+} = require("./provider-router.cjs");
 const {
   RELEASES_URL,
   checkForUpdate,
@@ -93,6 +137,7 @@ let orphanCleanupTimer = null;
 let orphanCleanupRunning = false;
 let refreshAllInFlight = null;
 let lastCheckedUpdate = null;
+let finalQuitStarted = false;
 const protectedProfileRoots = new Set();
 const activeAppServerClients = new Set();
 const storeMutationQueue = createSerialQueue();
@@ -110,18 +155,49 @@ function delay(ms) {
 function resolveCodexLaunch() {
   let candidates = [];
 
+  const configuredExecutable = String(process.env.CODEX_EXECUTABLE || "").trim();
+  if (configuredExecutable && fs.existsSync(configuredExecutable)) {
+    candidates.push(configuredExecutable);
+  }
+
   try {
-    candidates = execFileSync("where.exe", ["codex"], {
+    candidates.push(...execFileSync("where.exe", ["codex"], {
       encoding: "utf8",
       windowsHide: true,
     })
       .split(/\r?\n/)
       .map((entry) => entry.trim())
       .filter(Boolean)
-      .filter((entry) => fs.existsSync(entry));
+      .filter((entry) => fs.existsSync(entry)));
   } catch {
-    candidates = [];
+    // Continue with the desktop installation scan below.
   }
+
+  const desktopBinRoot = path.join(
+    process.env.LOCALAPPDATA || app.getPath("localAppData"),
+    "OpenAI",
+    "Codex",
+    "bin",
+  );
+  try {
+    const installedExecutables = fs
+      .readdirSync(desktopBinRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(desktopBinRoot, entry.name, "codex.exe"))
+      .filter((entry) => fs.existsSync(entry))
+      .sort((left, right) => {
+        try {
+          return fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs;
+        } catch {
+          return 0;
+        }
+      });
+    candidates.push(...installedExecutables);
+  } catch {
+    // Codex Desktop is optional; PATH shims remain available below.
+  }
+
+  candidates = [...new Set(candidates.map((entry) => path.resolve(entry)))];
 
   const executable = candidates.find((entry) => entry.toLowerCase().endsWith(".exe"));
   if (executable) {
@@ -196,6 +272,16 @@ class AppServerClient {
     this.child.stderr.on("data", (chunk) => {
       this.stderr = `${this.stderr}${chunk}`.slice(-8000);
     });
+    this.child.stdin.on("error", (error) => {
+      if (this.closed && error?.code === "EPIPE") return;
+      this.failAll(
+        new Error(
+          error?.code === "EPIPE"
+            ? "Codex App Server 已结束，请重新刷新或登录"
+            : String(error?.message || error),
+        ),
+      );
+    });
 
     const lineReader = readline.createInterface({ input: this.child.stdout });
     lineReader.on("line", (line) => this.handleLine(line));
@@ -210,6 +296,7 @@ class AppServerClient {
           ),
         );
       }
+      this.child = null;
     });
 
     await this.request(
@@ -288,7 +375,21 @@ class AppServerClient {
       }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
-      this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+      const input = this.child.stdin;
+      input.write(`${JSON.stringify(payload)}\n`, (error) => {
+        if (!error) return;
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        this.pending.delete(id);
+        clearTimeout(pending.timer);
+        pending.reject(
+          new Error(
+            error.code === "EPIPE"
+              ? "Codex App Server 已结束，请重新刷新或登录"
+              : String(error.message || error),
+          ),
+        );
+      });
     });
   }
 
@@ -296,7 +397,7 @@ class AppServerClient {
     if (!this.child || !this.child.stdin.writable) return;
     const payload = { method };
     if (params !== undefined) payload.params = params;
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+    this.child.stdin.write(`${JSON.stringify(payload)}\n`, () => undefined);
   }
 
   waitForNotification(method, predicate, timeoutMs = LOGIN_TIMEOUT_MS) {
@@ -940,20 +1041,21 @@ function stopActiveAppServerClients() {
 }
 
 function launchCodexTerminal(codexHome) {
+  const launch = resolveCodexLaunch();
   const escapedHome = codexHome.replaceAll("'", "''");
-  const command =
-    `start \"\" powershell.exe -NoExit -NoLogo -Command ` +
-    `\"$env:CODEX_HOME='${escapedHome}'; codex\"`;
-
-  const child = spawn(
-    process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe",
-    ["/d", "/s", "/c", command],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    },
-  );
+  const executable = launch.usesCommandShell
+    ? launch.commandFile.replaceAll("'", "''")
+    : launch.command.replaceAll("'", "''");
+  const child = spawn("powershell.exe", [
+    "-NoExit",
+    "-NoLogo",
+    "-Command",
+    `$env:CODEX_HOME='${escapedHome}'; & '${executable}'`,
+  ], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  });
   child.unref();
 }
 
@@ -1011,7 +1113,7 @@ function registerIpcHandlers() {
   });
   ipcMain.handle("tools:list-extensions", async (_event, id) => {
     const account = await findAccount(String(id));
-    return listExtensions(account.codexHome);
+    return listWorkspaceExtensions(account.codexHome);
   });
   ipcMain.handle("tools:toggle-skill", async (_event, id, skillId, enabled) => {
     const account = await findAccount(String(id));
@@ -1043,6 +1145,212 @@ function registerIpcHandlers() {
       return "";
     }
     return shell.openPath(extension ? account.codexHome : target);
+  });
+  ipcMain.handle("prompts:list", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return listPrompts(account.codexHome);
+  });
+  ipcMain.handle("prompts:save", async (_event, id, input) => {
+    const account = await findAccount(String(id));
+    return savePrompt(account.codexHome, input);
+  });
+  ipcMain.handle("prompts:delete", async (_event, id, promptId) => {
+    const account = await findAccount(String(id));
+    return deletePrompt(account.codexHome, String(promptId));
+  });
+  ipcMain.handle("prompts:toggle", async (_event, id, promptId, enabled) => {
+    const account = await findAccount(String(id));
+    return togglePrompt(account.codexHome, String(promptId), Boolean(enabled));
+  });
+  ipcMain.handle("prompts:set-mode", async (_event, id, mode) => {
+    const account = await findAccount(String(id));
+    return setPromptMode(account.codexHome, String(mode));
+  });
+  ipcMain.handle("prompts:sync", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return syncPromptCatalog(account.codexHome);
+  });
+  ipcMain.handle("prompts:save-category", async (_event, id, previousName, nextName) => {
+    const account = await findAccount(String(id));
+    return savePromptCategory(account.codexHome, String(previousName || ""), String(nextName || ""));
+  });
+  ipcMain.handle("prompts:delete-category", async (_event, id, name) => {
+    const account = await findAccount(String(id));
+    return deletePromptCategory(account.codexHome, String(name || ""));
+  });
+  ipcMain.handle("prompts:import", async (_event, id) => {
+    const account = await findAccount(String(id));
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "导入 Markdown 提示词",
+      properties: ["openFile"],
+      filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return importPrompt(account.codexHome, result.filePaths[0]);
+  });
+  ipcMain.handle("providers:list", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return listProviders(account.codexHome);
+  });
+  ipcMain.handle("providers:save", async (_event, id, input) => {
+    const account = await findAccount(String(id));
+    return saveProvider(account.codexHome, input);
+  });
+  ipcMain.handle("providers:duplicate", async (_event, id, providerId) => {
+    const account = await findAccount(String(id));
+    return duplicateProvider(account.codexHome, String(providerId));
+  });
+  ipcMain.handle("providers:activate", async (_event, id, providerId) => {
+    const account = await findAccount(String(id));
+    await activateProvider(account.codexHome, String(providerId));
+    await configureRouter(account.codexHome);
+    return listProviders(account.codexHome);
+  });
+  ipcMain.handle("providers:delete", async (_event, id, providerId) => {
+    const account = await findAccount(String(id));
+    return deleteProvider(account.codexHome, String(providerId));
+  });
+  ipcMain.handle("providers:test", async (_event, id, providerId, model) => {
+    const account = await findAccount(String(id));
+    return testProvider(account.codexHome, String(providerId), model ? String(model) : null);
+  });
+  ipcMain.handle("providers:import-database", async (_event, id) => {
+    const account = await findAccount(String(id));
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "导入本机 Provider 数据库",
+      properties: ["openFile"],
+      filters: [{ name: "SQLite 数据库", extensions: ["db", "sqlite", "sqlite3"] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return importCcSwitchProviders(account.codexHome, result.filePaths[0]);
+  });
+  ipcMain.handle("providers:set-context-window", async (_event, id, enabled) => {
+    const account = await findAccount(String(id));
+    const result = await setContextWindow(account.codexHome, Boolean(enabled));
+    await configureRouter(account.codexHome);
+    return result;
+  });
+  ipcMain.handle("providers:save-routing", async (_event, id, settings) => {
+    const account = await findAccount(String(id));
+    await saveRouting(account.codexHome, settings);
+    await configureRouter(account.codexHome);
+    return listProviders(account.codexHome);
+  });
+  ipcMain.handle("providers:router-status", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return getRouterStatus(account.codexHome);
+  });
+  ipcMain.handle("providers:reset-health", async (_event, id, providerId) => {
+    const account = await findAccount(String(id));
+    return resetRouterHealth(account.codexHome, String(providerId));
+  });
+  ipcMain.handle("tools:toggle-mcp", async (_event, id, name, enabled) => {
+    const account = await findAccount(String(id));
+    return toggleMcp(account.codexHome, String(name), Boolean(enabled));
+  });
+  ipcMain.handle("tools:save-extension-note", async (_event, id, kind, extensionId, note) => {
+    const account = await findAccount(String(id));
+    return saveExtensionNote(account.codexHome, String(kind), String(extensionId), String(note || ""));
+  });
+  ipcMain.handle("tools:check-skill-updates", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return checkSkillUpdates(account.codexHome);
+  });
+  ipcMain.handle("tools:update-skill", async (_event, id, skillId) => {
+    const account = await findAccount(String(id));
+    return updateSkill(account.codexHome, String(skillId));
+  });
+  ipcMain.handle("tools:install-skill", async (_event, id) => {
+    const account = await findAccount(String(id));
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "从 ZIP 安装 Skill",
+      properties: ["openFile"],
+      filters: [{ name: "ZIP", extensions: ["zip"] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return installSkillZip(account.codexHome, result.filePaths[0]);
+  });
+  ipcMain.handle("tools:preview-existing", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return previewExistingWorkspace(account.codexHome);
+  });
+  ipcMain.handle("tools:import-existing", async (_event, id, selection) => {
+    const account = await findAccount(String(id));
+    return importExistingWorkspace(account.codexHome, selection);
+  });
+  ipcMain.handle("tools:export-workspace", async (_event, id) => {
+    const account = await findAccount(String(id));
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "导出 Skills 与 MCP",
+      defaultPath: `D:\\${account.label}-skills-mcp.zip`,
+      filters: [{ name: "ZIP", extensions: ["zip"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return exportWorkspace(account.codexHome, result.filePath);
+  });
+  ipcMain.handle("tools:delete-sessions", async (_event, id, sessionIds, permanent) => {
+    const account = await findAccount(String(id));
+    const ids = Array.isArray(sessionIds) ? sessionIds.slice(0, 250) : [];
+    for (const sessionId of ids) {
+      const sessionPath = resolveSessionPath(account.codexHome, String(sessionId));
+      if (permanent) await fsp.rm(sessionPath, { force: true });
+      else await shell.trashItem(sessionPath);
+    }
+    return listSessions(account.codexHome);
+  });
+  ipcMain.handle("tools:export-sessions", async (_event, id, sessionIds) => {
+    const account = await findAccount(String(id));
+    const ids = Array.isArray(sessionIds) ? sessionIds.slice(0, 250) : [];
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "导出所选会话",
+      defaultPath: `D:\\${account.label}-sessions.zip`,
+      filters: [{ name: "ZIP", extensions: ["zip"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return exportSessions(account.codexHome, ids, result.filePath);
+  });
+  ipcMain.handle("tools:session-status", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return listSessionStatus(account.codexHome);
+  });
+  ipcMain.handle("tools:sync-sessions", async (_event, id, sessionIds) => {
+    const account = await findAccount(String(id));
+    const ids = Array.isArray(sessionIds) ? sessionIds.map(String).slice(0, 250) : [];
+    return syncSessionMetadata(account.codexHome, ids);
+  });
+  ipcMain.handle("tools:export-sessions-markdown", async (_event, id, sessionIds) => {
+    const account = await findAccount(String(id));
+    const ids = Array.isArray(sessionIds) ? sessionIds.map(String).slice(0, 250) : [];
+    const single = ids.length === 1;
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "导出会话为 Markdown",
+      defaultPath: single ? `D:\${account.label}-session.md` : `D:\${account.label}-sessions-markdown.zip`,
+      filters: single
+        ? [{ name: "Markdown", extensions: ["md"] }]
+        : [{ name: "ZIP", extensions: ["zip"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return exportSessionsMarkdown(account.codexHome, ids, result.filePath);
+  });
+  ipcMain.handle("backups:list", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return listBackups(account.codexHome);
+  });
+  ipcMain.handle("backups:restore", async (_event, id, backupId) => {
+    const account = await findAccount(String(id));
+    return restoreBackup(account.codexHome, String(backupId));
+  });
+  ipcMain.handle("diagnostics:run", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return runDiagnostics(account.codexHome);
+  });
+  ipcMain.handle("diagnostics:check-config", async (_event, id) => {
+    const account = await findAccount(String(id));
+    return checkConfigHealth(account.codexHome);
+  });
+  ipcMain.handle("diagnostics:repair-config", async (_event, id, fingerprint) => {
+    const account = await findAccount(String(id));
+    return repairConfigHealth(account.codexHome, String(fingerprint || ""));
   });
   ipcMain.handle("system:open-data", async () =>
     shell.openPath(getStorePaths().root),
@@ -1085,9 +1393,13 @@ function registerIpcHandlers() {
     let codexFound = true;
     let codexVersion = null;
     try {
+      const launch = resolveCodexLaunch();
+      const args = launch.usesCommandShell
+        ? [...launch.prefix, `${quoteCommandArgument(launch.commandFile)} --version`]
+        : ["--version"];
       const result = execFileSync(
-        process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe",
-        ["/d", "/s", "/c", "codex --version"],
+        launch.command,
+        args,
         { encoding: "utf8", windowsHide: true, timeout: 5_000 },
       );
       codexVersion = result.trim();
@@ -1170,6 +1482,18 @@ if (!hasSingleInstanceLock) {
     registerIpcHandlers();
     createWindow();
     startOrphanCleanup();
+    try {
+      const accounts = await loadAccounts();
+      await Promise.all(
+        accounts.map((account) =>
+          configureRouter(account.codexHome).catch((error) =>
+            console.error("Router startup failed", safeError(error)),
+          ),
+        ),
+      );
+    } catch (error) {
+      console.error("Router state restore failed", safeError(error));
+    }
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -1180,7 +1504,20 @@ if (!hasSingleInstanceLock) {
     if (process.platform !== "darwin") app.quit();
   });
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
+    if (!finalQuitStarted) {
+      event.preventDefault();
+      finalQuitStarted = true;
+      const accounts = accountCache || [];
+      Promise.all(
+        accounts.map((account) =>
+          suspendRouter(account.codexHome).catch((error) =>
+            console.error("Router shutdown failed", safeError(error)),
+          ),
+        ),
+      ).finally(() => app.quit());
+      return;
+    }
     stopOrphanCleanup();
     stopActiveAppServerClients();
   });

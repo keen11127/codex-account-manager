@@ -6,6 +6,7 @@ const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 const MANAGED_FILES = {
   instructions: "AGENTS.md",
   config: "config.toml",
+  auth: "auth.json",
 };
 
 function resolveInside(root, ...segments) {
@@ -73,6 +74,18 @@ async function writeManagedFile(codexHome, kind, content) {
   if (Buffer.byteLength(content, "utf8") > MAX_TEXT_BYTES) {
     throw new Error("配置内容超过 2 MB，未保存");
   }
+  if (kind === "auth") {
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      throw new Error("auth.json 不是有效的 JSON");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("auth.json 顶层必须是 JSON 对象");
+    }
+    content = `${JSON.stringify(parsed, null, 2)}\n`;
+  }
 
   await fsp.mkdir(codexHome, { recursive: true });
   const filePath = resolveInside(codexHome, fileName);
@@ -90,6 +103,9 @@ async function writeManagedFile(codexHome, kind, content) {
   const temporaryPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   await fsp.writeFile(temporaryPath, content, "utf8");
   await fsp.rename(temporaryPath, filePath);
+  if (kind === "auth" && process.platform !== "win32") {
+    await fsp.chmod(filePath, 0o600);
+  }
   const stat = await fsp.stat(filePath);
   return {
     kind,
@@ -253,6 +269,7 @@ async function readSessionMetadata(filePath) {
           return {
             projectPath: payload?.cwd || payload?.project_path || null,
             model: payload?.model || null,
+            provider: payload?.model_provider || payload?.provider || null,
           };
         }
       }
@@ -262,7 +279,7 @@ async function readSessionMetadata(filePath) {
   } catch {
     // Session metadata is optional; the file remains manageable by filename.
   }
-  return { projectPath: null, model: null };
+  return { projectPath: null, model: null, provider: null };
 }
 
 async function listSessions(codexHome) {
@@ -280,6 +297,7 @@ async function listSessions(codexHome) {
         sizeBytes: stat.size,
         projectPath: metadata.projectPath,
         model: metadata.model,
+        provider: metadata.provider,
       };
     }),
   );

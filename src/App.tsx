@@ -1,5 +1,4 @@
 import {
-  Badge,
   Button,
   Checkbox,
   Field,
@@ -15,7 +14,6 @@ import {
   CheckmarkCircle20Filled,
   Clock20Regular,
   Delete20Regular,
-  Desktop20Regular,
   Dismiss20Regular,
   PersonAccounts20Regular,
   Search20Regular,
@@ -68,10 +66,16 @@ type AccountFilter = "all" | "attention" | "reset";
 
 const viewTitles: Record<AppView, { title: string; subtitle: string }> = {
   accounts: { title: "账号中心", subtitle: "额度与登录状态" },
-  instructions: { title: "指令提示词", subtitle: "账号级 AGENTS.md" },
-  config: { title: "Codex 配置", subtitle: "模型、Provider 与 MCP" },
+  workspace: { title: "工作区概览", subtitle: "当前 Codex 配置" },
+  prompts: { title: "指令提示词", subtitle: "模板、分类与 AGENTS.md" },
+  providers: { title: "供应商与路由", subtitle: "API、模型与故障转移" },
+  config: { title: "TOML 配置", subtitle: "当前账号 live 配置" },
+  auth: { title: "登录凭据", subtitle: "当前账号官方登录文件" },
   extensions: { title: "技能和 MCP", subtitle: "本地扩展管理" },
   sessions: { title: "会话管理", subtitle: "本地历史记录" },
+  backups: { title: "备份与恢复", subtitle: "配置历史版本" },
+  diagnostics: { title: "环境诊断", subtitle: "登录与本地目录检查" },
+  settings: { title: "应用设置", subtitle: "刷新与本地数据" },
   about: { title: "关于", subtitle: "版本、更新与相关入口" },
 };
 
@@ -284,6 +288,7 @@ export function App() {
   const [activeView, setActiveView] = useState<AppView>("accounts");
   const [accounts, setAccounts] = useState<ManagedAccount[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
@@ -301,10 +306,18 @@ export function App() {
   const [query, setQuery] = useState("");
   const [accountFilter, setAccountFilter] = useState<AccountFilter>("all");
   const [now, setNow] = useState(Date.now());
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(
+    () => localStorage.getItem("codex-manager.auto-refresh") !== "off",
+  );
+  const [autoRefreshMinutes, setAutoRefreshMinutes] = useState(() => {
+    const parsed = Number(localStorage.getItem("codex-manager.refresh-minutes"));
+    return [1, 2, 5, 10].includes(parsed) ? parsed : 1;
+  });
   const refreshAllRequest = useRef<Promise<ManagedAccount[]> | null>(null);
   const accountsRef = useRef<ManagedAccount[]>([]);
   const loggingInIdsRef = useRef<Set<string>>(new Set());
   const autoRefreshRunning = useRef(false);
+  const configHealthSeenRef = useRef<Map<string, string>>(new Map());
 
   const [addOpen, setAddOpen] = useState(false);
   const [newLabel, setNewLabel] = useState("");
@@ -352,6 +365,20 @@ export function App() {
     const interval = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "codex-manager.auto-refresh",
+      autoRefreshEnabled ? "on" : "off",
+    );
+  }, [autoRefreshEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "codex-manager.refresh-minutes",
+      String(autoRefreshMinutes),
+    );
+  }, [autoRefreshMinutes]);
 
   useEffect(() => {
     accountsRef.current = accounts;
@@ -471,6 +498,35 @@ export function App() {
     [accounts, selectedId],
   );
 
+  const openAccountDetail = useCallback((id: string) => {
+    setSelectedId(id);
+    setDetailOpen(true);
+  }, []);
+
+  useEffect(() => {
+    if (!detailOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setDetailOpen(false);
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [detailOpen]);
+
+  useEffect(() => {
+    if (!selectedAccount || activeView !== "accounts") {
+      setDetailOpen(false);
+    }
+  }, [activeView, selectedAccount]);
+
   useEffect(() => {
     if (
       (query.trim() || accountFilter !== "all") &&
@@ -575,13 +631,46 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (loading || accounts.length === 0) return;
+    if (!autoRefreshEnabled || loading || accounts.length === 0) return;
     const interval = window.setInterval(
       () => void runAutomaticRefreshCycle(),
-      60_000,
+      autoRefreshMinutes * 60_000,
     );
     return () => window.clearInterval(interval);
-  }, [accounts.length, loading, runAutomaticRefreshCycle]);
+  }, [
+    accounts.length,
+    autoRefreshEnabled,
+    autoRefreshMinutes,
+    loading,
+    runAutomaticRefreshCycle,
+  ]);
+
+  useEffect(() => {
+    if (!selectedId || loading) return;
+    let alive = true;
+    const check = async () => {
+      try {
+        const report = await bridge.checkConfigHealth(selectedId);
+        if (!alive || report.status === "healthy") return;
+        const last = configHealthSeenRef.current.get(selectedId);
+        if (last === report.fingerprint) return;
+        configHealthSeenRef.current.set(selectedId, report.fingerprint);
+        notify(
+          report.canRepair ? "检测到可修复的配置问题" : "检测到配置问题",
+          report.issues[0]?.message || "请前往环境诊断查看详情",
+          report.status === "error" ? "error" : "warning",
+        );
+      } catch {
+        // Background health checks stay quiet; manual diagnostics show errors.
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 5 * 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [loading, notify, selectedId]);
 
   const login = async (id: string) => {
     updateWorkingSet(setLoggingInIds, id, true);
@@ -768,22 +857,16 @@ export function App() {
         </div>
       ) : null}
 
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            <Desktop20Regular />
-          </div>
-          <div className="brand-copy">
-            <strong>Codex Account Manager</strong>
-            <span>本地账号中心</span>
-          </div>
-          {!bridge.isDesktop ? (
-            <Badge appearance="tint" color="informative" size="small">
-              界面预览
-            </Badge>
-          ) : null}
-        </div>
+      <SideNavigation
+        activeView={activeView}
+        onChange={(view) => {
+          setDetailOpen(false);
+          setActiveView(view);
+        }}
+        preview={!bridge.isDesktop}
+      />
 
+      <header className="topbar">
         <div className="topbar-view" aria-live="polite">
           <strong>{viewTitles[activeView].title}</strong>
           <span>{viewTitles[activeView].subtitle}</span>
@@ -791,20 +874,28 @@ export function App() {
 
         <div className="topbar-actions">
           {activeView === "accounts" ? (
-            <Button
-              appearance="primary"
-              icon={<Add20Regular />}
-              aria-label="添加账号"
-              onClick={() => setAddOpen(true)}
-            >
-              添加账号
-            </Button>
+            <>
+              <Button
+                className="topbar-icon-button"
+                icon={refreshingAll ? <Spinner size="tiny" /> : <ArrowClockwise20Regular />}
+                aria-label={refreshingAll ? "正在刷新全部账号" : "刷新全部账号"}
+                title={refreshingAll ? "正在刷新全部账号" : "刷新全部账号"}
+                disabled={refreshingAll || refreshingIds.size > 0 || accounts.length === 0}
+                onClick={() => void refreshAll()}
+              />
+              <Button
+                icon={<Add20Regular />}
+                aria-label="添加账号"
+                onClick={() => setAddOpen(true)}
+              >
+                添加账号
+              </Button>
+            </>
           ) : null}
         </div>
       </header>
 
       <main className="app-main">
-        <SideNavigation activeView={activeView} onChange={setActiveView} />
         {activeView === "accounts" ? (
           <>
           <section className="summary-band" aria-label="账号摘要">
@@ -887,27 +978,6 @@ export function App() {
                   {connectedAccounts.length} 个在线，{attentionAccounts.length} 个待处理
                 </span>
               </div>
-              <div className="surface-toolbar__actions">
-                <Button
-                  className="refresh-all-button"
-                  appearance="secondary"
-                  size="small"
-                  icon={
-                    refreshingAll ? (
-                      <Spinner size="tiny" />
-                    ) : (
-                      <ArrowClockwise20Regular />
-                    )
-                  }
-                  aria-busy={refreshingAll}
-                  aria-label={refreshingAll ? "正在刷新全部账号" : "刷新全部账号"}
-                  title={refreshingAll ? "正在刷新全部账号" : "刷新全部账号"}
-                  disabled={
-                    refreshingAll || refreshingIds.size > 0 || accounts.length === 0
-                  }
-                  onClick={() => void refreshAll()}
-                />
-              </div>
             </div>
 
             <div className="account-filterbar">
@@ -974,7 +1044,7 @@ export function App() {
                   accounts={filteredAccounts}
                   selectedId={selectedId}
                   now={now}
-                  onSelect={setSelectedId}
+                  onSelect={openAccountDetail}
                   onLogin={login}
                   onLaunch={launchCodex}
                   onRename={(account) => {
@@ -987,7 +1057,7 @@ export function App() {
                 <AccountOverview
                   accounts={accounts}
                   now={now}
-                  onSelect={setSelectedId}
+                  onSelect={openAccountDetail}
                   availableResetCount={resetAccounts.length}
                   onBulkReset={openBulkReset}
                 />
@@ -995,23 +1065,32 @@ export function App() {
             )}
           </div>
 
-          <AccountDetail
-            account={selectedAccount}
-            now={now}
-            loggingIn={
-              selectedAccount ? loggingInIds.has(selectedAccount.id) : false
-            }
-            consumingCreditId={consumingCreditId}
-            onLogin={login}
-            onLaunch={launchCodex}
-            onOpenProfile={openProfile}
-            onOpenUsage={() => bridge.openUsage()}
-            onOpenCodexWeb={() => bridge.openCodexWeb()}
-            onConsume={(account, credit) =>
-              setConsumeTarget({ account, credit })
-            }
-          />
           </section>
+          {detailOpen && selectedAccount ? (
+            <div
+              className="account-detail-layer"
+              role="presentation"
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) setDetailOpen(false);
+              }}
+            >
+              <AccountDetail
+                account={selectedAccount}
+                now={now}
+                loggingIn={loggingInIds.has(selectedAccount.id)}
+                consumingCreditId={consumingCreditId}
+                onClose={() => setDetailOpen(false)}
+                onLogin={login}
+                onLaunch={launchCodex}
+                onOpenProfile={openProfile}
+                onOpenUsage={() => bridge.openUsage()}
+                onOpenCodexWeb={() => bridge.openCodexWeb()}
+                onConsume={(account, credit) =>
+                  setConsumeTarget({ account, credit })
+                }
+              />
+            </div>
+          ) : null}
           </>
         ) : (
           <section className="utility-workspace">
@@ -1024,6 +1103,12 @@ export function App() {
                 selectedId={selectedId}
                 onSelect={setSelectedId}
                 onNotify={notify}
+                onNavigate={setActiveView}
+                onLogin={(id) => void login(id)}
+                autoRefreshEnabled={autoRefreshEnabled}
+                autoRefreshMinutes={autoRefreshMinutes}
+                onAutoRefreshEnabled={setAutoRefreshEnabled}
+                onAutoRefreshMinutes={setAutoRefreshMinutes}
               />
             )}
           </section>

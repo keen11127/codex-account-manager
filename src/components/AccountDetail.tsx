@@ -6,6 +6,7 @@ import {
 import {
   CheckmarkCircle20Regular,
   Clock20Regular,
+  Dismiss20Regular,
   ErrorCircle20Filled,
   FolderOpen20Regular,
   Globe20Regular,
@@ -39,6 +40,7 @@ interface AccountDetailProps {
   now: number;
   loggingIn: boolean;
   consumingCreditId: string | null;
+  onClose(): void;
   onLogin(id: string): void;
   onLaunch(id: string): void;
   onOpenProfile(id: string): void;
@@ -52,6 +54,7 @@ export function AccountDetail({
   now,
   loggingIn,
   consumingCreditId,
+  onClose,
   onLogin,
   onLaunch,
   onOpenProfile,
@@ -108,17 +111,31 @@ export function AccountDetail({
     : null;
 
   return (
-    <aside className="detail-panel" aria-label={`${account.label} 账号详情`}>
+    <aside
+      className="detail-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="account-detail-title"
+    >
       <header className="detail-header">
         <div className="detail-header__identity">
           <div className="detail-avatar" aria-hidden="true">
             {account.label.slice(0, 1).toLocaleUpperCase("zh-CN")}
           </div>
           <div className="detail-header__copy">
-            <h2>{account.label}</h2>
+            <h2 id="account-detail-title">{account.label}</h2>
             <span>{getAccountEmail(account)}</span>
           </div>
         </div>
+        <Button
+          className="detail-close-button"
+          appearance="subtle"
+          icon={<Dismiss20Regular />}
+          aria-label="关闭账号详情"
+          title="关闭账号详情"
+          autoFocus
+          onClick={onClose}
+        />
       </header>
 
       <div className="detail-meta">

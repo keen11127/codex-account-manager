@@ -1,6 +1,6 @@
 {
   "name": "codex-account-manager",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "private": true,
   "author": "Local Codex Tools",
   "license": "MIT",
@@ -44,9 +44,12 @@
     "appId": "com.local.codexaccountmanager",
     "productName": "Codex Account Manager",
     "asar": true,
+    "compression": "maximum",
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "prompt-templates/**/*",
+      "THIRD_PARTY_NOTICES.md",
       "package.json"
     ],
     "directories": {
@@ -79,5 +82,8 @@
     "portable": {
       "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
     }
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5"
   }
 }

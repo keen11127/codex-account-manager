@@ -172,13 +172,19 @@ export interface SystemInfo {
 
 export type AppView =
   | "accounts"
-  | "instructions"
+  | "workspace"
+  | "prompts"
+  | "providers"
   | "config"
+  | "auth"
   | "extensions"
   | "sessions"
+  | "backups"
+  | "diagnostics"
+  | "settings"
   | "about";
 
-export type ManagedFileKind = "instructions" | "config";
+export type ManagedFileKind = "instructions" | "config" | "auth";
 
 export interface ManagedTextFile {
   kind: ManagedFileKind;
@@ -195,12 +201,20 @@ export interface ManagedSkill {
   enabled: boolean;
   canToggle: boolean;
   description: string | null;
+  note: string;
+  sourceUrl: string | null;
+  updateStatus: "unchecked" | "current" | "available" | "unsupported" | "error";
+  currentRef: string | null;
+  latestRef: string | null;
+  updateCheckedAt: string | null;
 }
 
 export interface ManagedMcpServer {
   name: string;
   transport: string;
   target: string | null;
+  enabled?: boolean;
+  note?: string;
 }
 
 export interface ExtensionInventory {
@@ -208,6 +222,7 @@ export interface ExtensionInventory {
   mcpServers: ManagedMcpServer[];
   skillsDirectory: string;
   disabledSkillsDirectory: string;
+  lastUpdateCheckAt?: string | null;
 }
 
 export interface ManagedSession {
@@ -217,6 +232,204 @@ export interface ManagedSession {
   sizeBytes: number;
   projectPath: string | null;
   model: string | null;
+  provider: string | null;
+  syncStatus?: "current" | "outdated" | "unknown";
+  syncDetail?: string;
+}
+
+export interface ManagedPrompt {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  content: string;
+  source: "builtin" | "remote" | "custom";
+  remoteRevision?: string | null;
+  userEdited?: boolean;
+  updatedAt: string;
+}
+
+export interface PromptLibrary {
+  mode: "append" | "replace";
+  activeIds: string[];
+  prompts: ManagedPrompt[];
+  categories: string[];
+  lastSyncedAt: string | null;
+  instructionsPath: string;
+}
+
+export interface ProviderProfileInput {
+  id?: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  wireApi: "responses" | "chat_completions";
+  requiresOpenaiAuth: boolean;
+  tomlConfig?: string;
+  notes?: string;
+  contextWindow?: number | null;
+  modelMappings?: ProviderModelMapping[];
+}
+
+export interface ProviderModelMapping {
+  model: string;
+  displayName: string;
+  contextWindow: number | null;
+}
+
+export interface ProviderProfile {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  wireApi: "responses" | "chat_completions";
+  requiresOpenaiAuth: boolean;
+  apiKeySet: boolean;
+  apiKeyHint: string | null;
+  tomlConfig: string;
+  notes: string;
+  contextWindow: number | null;
+  modelMappings: ProviderModelMapping[];
+  active: boolean;
+  updatedAt: string;
+}
+
+export interface RoutingSettings {
+  enabled: boolean;
+  takeover: boolean;
+  autoFailover: boolean;
+  listenAddress: string;
+  listenPort: number;
+  providerIds: string[];
+  maxRetries: number;
+  firstByteTimeout: number;
+  idleTimeout: number;
+  requestTimeout: number;
+  failureThreshold: number;
+  successThreshold: number;
+  errorRateThreshold: number;
+  minimumRequests: number;
+  recoverySeconds: number;
+}
+
+export interface ProviderInventory {
+  activeId: string;
+  official: {
+    id: "official";
+    name: string;
+    active: boolean;
+    authReady: boolean;
+  };
+  profiles: ProviderProfile[];
+  routing: RoutingSettings;
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  status: number | null;
+  elapsedMs: number;
+  models: string[];
+  testedModel?: string | null;
+  modelTest?: {
+    ok: boolean;
+    status: number | null;
+    message: string;
+  } | null;
+  message: string;
+}
+
+export interface RouterProviderHealth {
+  id: string;
+  state: "closed" | "open" | "half_open";
+  cooldownSeconds: number;
+  lastStatus: number | null;
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+  totalRequests: number;
+  failedRequests: number;
+  errorRate: number;
+}
+
+export interface RouterStatus {
+  running: boolean;
+  takeoverActive: boolean;
+  address: string | null;
+  settings: RoutingSettings;
+  runtime: {
+    requestCount: number;
+    failoverCount: number;
+    inFlight: number;
+    successCount: number;
+    failureCount: number;
+    uptimeSeconds: number;
+    lastRequestAt: string | null;
+    lastProviderId: string | null;
+    lastError: string | null;
+    providers: RouterProviderHealth[];
+  };
+}
+
+export interface ManagedBackup {
+  id: string;
+  kind: ManagedFileKind;
+  name: string;
+  createdAt: string;
+  sizeBytes: number;
+}
+
+export interface DiagnosticCheck {
+  id: string;
+  label: string;
+  status: "ok" | "warning" | "error";
+  detail: string;
+  action: string | null;
+}
+
+export interface DiagnosticReport {
+  checkedAt: string;
+  codexHome: string;
+  status: "ok" | "warning" | "error";
+  checks: DiagnosticCheck[];
+  configHealth?: ConfigHealthReport;
+}
+
+export interface ConfigHealthIssue {
+  code: string;
+  level: "warning" | "error";
+  message: string;
+  repairable: boolean;
+}
+
+export interface ConfigHealthReport {
+  status: "healthy" | "warning" | "error";
+  checkedAt: string;
+  fingerprint: string;
+  canRepair: boolean;
+  issues: ConfigHealthIssue[];
+  repairSummary: string[];
+}
+
+export interface WorkspaceImportPreview {
+  sourceHome: string;
+  skills: Array<{ id: string; exists: boolean }>;
+  mcpServers: Array<ManagedMcpServer & { exists: boolean }>;
+}
+
+export interface ProviderImportResult {
+  databasePath: string;
+  imported: number;
+  added: number;
+  updated: number;
+  merged: number;
+  skipped: number;
+  warnings: string[];
+  inventory: ProviderInventory;
+}
+
+export interface SessionStatusResult {
+  target: { provider: string | null; model: string | null };
+  sessions: ManagedSession[];
 }
 
 export interface UpdateInfo {
@@ -288,6 +501,48 @@ export interface CodexManagerBridge {
     id: string,
     kind: ManagedFileKind | "home" | "skills" | "sessions",
   ): Promise<string>;
+  listPrompts(id: string): Promise<PromptLibrary>;
+  savePrompt(id: string, input: Partial<ManagedPrompt>): Promise<PromptLibrary>;
+  deletePrompt(id: string, promptId: string): Promise<PromptLibrary>;
+  togglePrompt(id: string, promptId: string, enabled: boolean): Promise<PromptLibrary>;
+  setPromptMode(id: string, mode: PromptLibrary["mode"]): Promise<PromptLibrary>;
+  syncPromptCatalog(id: string): Promise<{ library: PromptLibrary; added: number; updated: number; preserved: number }>;
+  savePromptCategory(id: string, previousName: string, nextName: string): Promise<PromptLibrary>;
+  deletePromptCategory(id: string, name: string): Promise<PromptLibrary>;
+  importPrompt(id: string): Promise<PromptLibrary | null>;
+  listProviders(id: string): Promise<ProviderInventory>;
+  saveProvider(id: string, input: ProviderProfileInput): Promise<ProviderInventory>;
+  duplicateProvider(id: string, providerId: string): Promise<ProviderInventory>;
+  activateProvider(id: string, providerId: string): Promise<ProviderInventory>;
+  deleteProvider(id: string, providerId: string): Promise<ProviderInventory>;
+  testProvider(id: string, providerId: string, model?: string | null): Promise<ProviderTestResult>;
+  importProviderDatabase(id: string): Promise<ProviderImportResult | null>;
+  setContextWindow(id: string, enabled: boolean): Promise<{ enabled: boolean; file: ManagedTextFile }>;
+  saveRouting(id: string, settings: RoutingSettings): Promise<ProviderInventory>;
+  getRouterStatus(id: string): Promise<RouterStatus>;
+  resetRouterHealth(id: string, providerId: string): Promise<RouterStatus>;
+  toggleMcp(id: string, name: string, enabled: boolean): Promise<ExtensionInventory>;
+  saveExtensionNote(id: string, kind: "skill" | "mcp", extensionId: string, note: string): Promise<ExtensionInventory>;
+  checkSkillUpdates(id: string): Promise<ExtensionInventory>;
+  updateSkill(id: string, skillId: string): Promise<ExtensionInventory>;
+  installSkillZip(id: string): Promise<ExtensionInventory | null>;
+  previewExistingWorkspace(id: string): Promise<WorkspaceImportPreview>;
+  importExistingWorkspace(id: string, selection?: { skills: string[]; mcpServers: string[] }): Promise<{
+    importedSkills: number;
+    importedMcp: number;
+    inventory: ExtensionInventory;
+  }>;
+  exportWorkspace(id: string): Promise<{ path: string; itemCount: number } | null>;
+  deleteSessions(id: string, sessionIds: string[], permanent?: boolean): Promise<ManagedSession[]>;
+  exportSessions(id: string, sessionIds: string[]): Promise<{ path: string; sessionCount: number } | null>;
+  getSessionStatus(id: string): Promise<SessionStatusResult>;
+  syncSessions(id: string, sessionIds: string[]): Promise<{ changed: number; skipped: number; errors: Array<{ id: string; message: string }>; status: SessionStatusResult }>;
+  exportSessionsMarkdown(id: string, sessionIds: string[]): Promise<{ path: string; sessionCount: number } | null>;
+  listBackups(id: string): Promise<ManagedBackup[]>;
+  restoreBackup(id: string, backupId: string): Promise<{ restored: ManagedTextFile; backups: ManagedBackup[] }>;
+  runDiagnostics(id: string): Promise<DiagnosticReport>;
+  checkConfigHealth(id: string): Promise<ConfigHealthReport>;
+  repairConfigHealth(id: string, fingerprint: string): Promise<{ changed: boolean; report: ConfigHealthReport; backupPath: string | null }>;
   checkForUpdate(): Promise<UpdateInfo>;
   installUpdate(): Promise<UpdateInstallResult>;
   openDownloads(): Promise<void>;

@@ -48,6 +48,27 @@ describe("workspace tools", () => {
     expect((await tools.readManagedFile(root, "instructions")).exists).toBe(true);
   });
 
+  it("validates and backs up auth JSON before replacing credentials", async () => {
+    const root = await temporaryHome();
+    await writeFile(path.join(root, "auth.json"), '{"auth_mode":"chatgpt","old":true}\n', "utf8");
+
+    await expect(tools.writeManagedFile(root, "auth", "not-json")).rejects.toThrow(
+      "auth.json 不是有效的 JSON",
+    );
+    expect(await readFile(path.join(root, "auth.json"), "utf8")).toContain('"old":true');
+
+    const saved = await tools.writeManagedFile(
+      root,
+      "auth",
+      '{"auth_mode":"chatgpt","tokens":{"access_token":"fixture"}}',
+    );
+    expect(JSON.parse(saved.content)).toMatchObject({
+      auth_mode: "chatgpt",
+      tokens: { access_token: "fixture" },
+    });
+    expect(await readFile(saved.backupPath, "utf8")).toContain('"old":true');
+  });
+
   it("parses MCP server summaries without exposing environment values", () => {
     const servers = tools.parseMcpServers(`
 [mcp_servers.docs]
